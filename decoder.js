@@ -78,8 +78,11 @@ window.OC8 = (function () {
     ['Я тебе кохаю', 20],
     ['Все буде гаразд', 158],
     ['Добро переможе зло', 156],
-    ['Мамо, я тебе люблю', 3],
-    ['Михаил Кашкаров', 5]
+    ['Мамо, я тебе люблю', 28],
+    ['Михаил Кашкаров', 5],
+    ['KASHKAROV MYKHAILO MYKOLAYOVYCH', 15],
+    ['PROFESSIONAL DICKHEAD', 181],
+    ['astra31415926.github.io/', 12]
   ];
   const DICT_BY_LEN = DICT.slice().sort((a, b) => b[0].length - a[0].length);
   const tokChar = new Map();
