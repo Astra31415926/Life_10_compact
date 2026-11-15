@@ -991,8 +991,29 @@ function readCredit(){        /* {title,author,link} або null, якщо по�
   }
   return {title,author,link};
 }
-const enc=window.OC8;        /* компактна версія: 1 символ = 8 клітин */
-const decFatal=window.OC8;
+/* ДВА СПОСОБИ ЗАПИСУ (загальна версія). Звичайний (UTF-8) — як на основному
+   сайті; компактний (OC8) — 1 символ = 8 клітин + контрольний байт.
+   Генератор сам обирає спосіб для кожного коду (chooseFormat). */
+const UTF8C=(function(){const te=new TextEncoder(),td=new TextDecoder('utf-8',{fatal:true});return {name:'utf8',encode:s=>te.encode(s),decode:b=>td.decode(b),withCheck:b=>b,stripCheck:b=>b,CHK_BITS:0};})();
+const OC8C={name:'oc8',encode:s=>OC8.encode(s),decode:b=>OC8.decode(b),withCheck:b=>OC8.withCheck(b),stripCheck:b=>OC8.stripCheck(b),CHK_BITS:8};
+let GEN=UTF8C;          /* спосіб останнього зібраного коду */
+let FMT_LOCK=null;      /* після сканування малюємо тим способом, яким код прочитано */
+const enc=UTF8C;        /* ліміти довжини рахуємо як на основному сайті */
+const decFatal={decode:b=>GEN.decode(b)};
+function cleanTxt(t){for(const ch of t){const o=ch.codePointAt(0);if(o===0||(o<32&&ch!=='\n'&&ch!=='\t'))return false;}return true;}
+/* Компактний — лише коли: усі символи є в таблиці; поле стає МЕНШИМ; і жоден
+   канал не читається звичайним способом (інакше сканер прочитав би його хибно). */
+function chooseFormat(T){
+  const ts=T.filter(t=>t);
+  if(FMT_LOCK&&FMT_LOCK.text===D.single)return FMT_LOCK.fmt==='oc8'?OC8C:UTF8C;
+  if(!ts.length)return UTF8C;
+  if(ts.some(t=>OC8.clean(t)!==t))return UTF8C;
+  const extra=(layers===3&&monoMark===1)?1:0;
+  const bU=Math.max(...ts.map(t=>UTF8C.encode(t).length*8)), bC=Math.max(...ts.map(t=>OC8C.encode(t).length*8+8));
+  if(pickN2(mode,bC+extra)>=pickN2(mode,bU+extra))return UTF8C;
+  for(const t of ts){const by=OC8.withCheck(OC8.encode(t));try{if(cleanTxt(UTF8C.decode(by)))return UTF8C;}catch(e){}}
+  return OC8C;
+}
 const CH=['r','g','b'];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
@@ -1478,6 +1499,7 @@ async function applyScan(best){
     const m=(((ci[0]||0)^ng)<<2)|(((ci[1]||0)^ng)<<1)|((ci[2]||0)^ng);
     const k=INV_SEQ.indexOf(m); if(k>=0){rgbStep=k;rgbDeg=k*45;}
   }else if(!STITCH())invert=!!best.negative;
+  FMT_LOCK={fmt:best.format||'utf8',text:txt};   /* перемальовуємо тим самим способом, яким прочитано (поки текст не змінено) */
   setLayers(colored?3:1); syncInv();
   D.single=txt; okChime(); $('txt').value='';
   await typeOut($('txt'),txt,26);
@@ -1500,9 +1522,9 @@ function baseCells(m,n){const c=Rof(n),R=c,o=[];if(m==='oct'){for(let i=0;i<=R;i
 function mirrors(m,n,x,y){const c=Rof(n),i=x-c,j=y-c;let p;if(m==='oct')p=[[i,j],[j,i],[-i,j],[-j,i],[i,-j],[j,-i],[-i,-j],[-j,-i]];else if(m==='quad')p=[[i,j],[-i,j],[i,-j],[-i,-j]];else p=[[i,j],[-i,j]];const o=[];for(const [a,b] of p){const X=c+a,Y=c+b;if(X>=0&&Y>=0&&X<n&&Y<n)o.push([X,Y])}return o;}
 function pickN2(m,need){for(let n=MINN;n<=MAXN;n+=2)if(capacity(m,n)>=need)return n;return MAXN;}
 
-function textBits(t){const data=OC8.withCheck(enc.encode(t));const bits=new Uint8Array(data.length*8);for(let i=0;i<data.length;i++)for(let b=0;b<8;b++)bits[i*8+b]=(data[i]>>(7-b))&1;return {nby:data.length,bits};}
+function textBits(t){const data=GEN.withCheck(GEN.encode(t));const bits=new Uint8Array(data.length*8);for(let i=0;i<data.length;i++)for(let b=0;b<8;b++)bits[i*8+b]=(data[i]>>(7-b))&1;return {nby:data.length,bits};}
 function isClean(t){for(const ch of t){const o=ch.codePointAt(0);if(o===0)return false;if(o<32&&ch!=='\n'&&ch!=='\t')return false;}return true;}
-function bytesToText(by){while(by.length&&by[by.length-1]===0)by.pop();if(!by.length)return null;by=OC8.stripCheck(by);if(!by||!by.length)return null;try{const t=decFatal.decode(new Uint8Array(by));return isClean(t)?t:null}catch(e){return null}}
+function bytesToText(by){while(by.length&&by[by.length-1]===0)by.pop();if(!by.length)return null;by=GEN.stripCheck(by);if(!by||!by.length)return null;try{const t=decFatal.decode(new Uint8Array(by));return isClean(t)?t:null}catch(e){return null}}
 function decodeSector(g,n,m,offset){const bc=baseCells(m,n),by=[];const start=offset||0;for(let i=start;i+7<bc.length;i+=8){let v=0;for(let b=0;b<8;b++){const [x,y]=bc[i+b];v=(v<<1)|(g[y*n+x]?1:0)}by.push(v);}return bytesToText(by);}
 function markCell(g,n,m){const [x,y]=baseCells(m,n)[0];return g[y*n+x]?1:0;}
 
@@ -1522,7 +1544,8 @@ function build(){
   updateBytes();
   if(!T.some(t=>t.length)){clearStage();['s-ch','s-by','s-bits'].forEach(id=>$(id).textContent='0');$('s-fld').textContent='—';$('s-warn').style.display='none';$('rt').innerHTML='';saveState();return;}
   let nch=0,nby=0,maxBits=0,ovf=false;
-  T.forEach(t=>{if(t){nch+=[...t].length;nby+=enc.encode(t).length;maxBits=Math.max(maxBits,enc.encode(t).length*8+OC8.CHK_BITS)}});
+  GEN=(mode==='row')?UTF8C:chooseFormat(T);
+  T.forEach(t=>{if(t){nch+=[...t].length;nby+=GEN.encode(t).length;maxBits=Math.max(maxBits,GEN.encode(t).length*8+GEN.CHK_BITS)}});
 
   if(mode==='row'){
     let maxB=1;T.forEach(t=>{for(const c of t){const k=enc.encode(c).length;if(k>maxB)maxB=k}});const h=Math.max(...T.map(t=>[...t].length),1);W=maxB*8;H=h;
@@ -1531,7 +1554,7 @@ function build(){
   }else{
     const extraR=(layers===3&&monoMark===1)?1:0;const n=pickN2(mode,maxBits+extraR);W=H=n;
     CH.forEach((k,i)=>{let markBit=null;if(layers===3&&monoMark===1&&i===0)markBit=1;const r=fillChannel(T[i]||'',n,mode,markBit);grid[k]=r.g;dmask[k]=r.dm;if(r.ovf)ovf=true;});
-    $('s-fld').textContent=n+'×'+n;}
+    $('s-fld').textContent=n+'×'+n+(GEN===OC8C?' · компакт':'');}
 
   $('s-ch').textContent=nch;$('s-by').textContent=nby;$('s-bits').textContent=maxBits;$('s-warn').style.display=ovf?'block':'none';render();
   let ok;
@@ -2962,8 +2985,7 @@ $('txt').oninput=e=>{
   {const v0=e.target.value.trim().toLowerCase();
    if(v0==='//admin'||v0==='//фвьшт'){e.target.value='';admDoor();return;}}   /* режим адміністратора (і з українською розкладкою) */
   if($('rt'))$('rt').innerHTML='';
-  {const raw=e.target.value,cl=window.OC8.clean(raw);   /* компактна версія: лише символи з таблиці */
-   if(cl!==raw){let c=0;try{c=e.target.selectionStart;}catch(_){}c=Math.max(0,c-(raw.length-cl.length));e.target.value=cl;try{e.target.selectionStart=e.target.selectionEnd=c;}catch(_){}bumpField();if(typeof toast==='function')toast('Цей символ у компактній версії недоступний');}}
+  if(e.isTrusted)FMT_LOCK=null;   /* людина править текст — спосіб знову обирається сам */
   const fit=fitBytes(D.single,e.target.value);
   if(fit){ e.target.value=fit.value; try{e.target.selectionStart=e.target.selectionEnd=fit.caret;}catch(_){} bumpField(); }
   const v=e.target.value;isDemo=false;if(v.length>prevLen)keyClick();prevLen=v.length;scannedImg=null;D.single=v;autoGrow();build();schedHist();};
@@ -3464,7 +3486,7 @@ function rowB(g,text,chars,ox,y,m,gap){
   var G=octGrid(text), start=0;
   var hot=(contrast(RED,SHEET)>=2.2&&dist(RED,ACC)>120)?RED:TEXT, dim=mix(ACC,SHEET,.55);
   chars.forEach(function(ch,i){
-    var lo=start,hi=start+window.OC8.encode(ch).length*8;start=hi;
+    var lo=start,hi=start+GEN.encode(ch).length*8;start=hi;
     miniFrame(g,ox+i*(m+gap),y,m,G.n,ACC,{own:G.own,col:function(k){
       if(!G.on[k])return null; var idx=G.own[k]; return (idx>=lo&&idx<hi)?hot:dim;}});
   });
