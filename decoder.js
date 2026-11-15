@@ -49,10 +49,11 @@ window.OC8 = (function () {
     }
     return o;
   }
-  /* СЛОВНИК (затверджено 15.11.2026). Частий шматок тексту = 1 байт.
-     Значення НЕ МІНЯТИ ніколи: інакше вже надруковані коди прочитаються
-     неправильно. Додавати нові — лише у вільні значення. */
-  const DICT = [
+  /* СЛОВНИК. Частий шматок тексту = 1 байт (1 поверх) або 2 байти (2 поверх:
+     «двері» + номер). Значення НЕ МІНЯТИ після публікації: інакше вже
+     надруковані коди прочитаються неправильно. Додавати — лише у вільні місця.
+     Затверджено 16.11.2026. */
+  const DICT = [                     /* 1 поверх: 8 клітин */
     ['https://www.youtube.com/', 173],
     ['https://www.instagram.com/', 138],
     ['https://www.tiktok.com/', 174],
@@ -60,53 +61,72 @@ window.OC8 = (function () {
     ['https://t.me/', 159],
     ['https://www.ornamentcode.com/', 182],
     ['https://', 172],
-    ['https://www.', 169],
-    ['www.', 160],
-    ['.com', 164],
-    ['.com.ua', 166],
-    ['.ua', 161],
-    ['.org', 162],
-    /* фрази (15.11.2026, медальйони обрав автор) */
-    ['Слава Україні', 155],
-    ['Героям слава', 153],
-    ['Все буде Україна', 128],
-    ['Незламні', 27],
-    ['Свобода', 189],
-    ['Батьківщина', 167],
-    ['Разом до перемоги', 190],
-    ['Доброго вечора, ми з України', 135],
-    ['Я тебе кохаю', 20],
-    ['Все буде гаразд', 158],
-    ['Добро переможе зло', 156],
-    ['Мамо, я тебе люблю', 28],
-    ['Михаил Кашкаров', 5],
-    ['KASHKAROV MYKHAILO MYKOLAYOVYCH', 15],
-    ['PROFESSIONAL DICKHEAD', 181],
-    ['astra31415926.github.io/', 12]
+    ['https://www.', 169]
   ];
-  const DICT_BY_LEN = DICT.slice().sort((a, b) => b[0].length - a[0].length);
-  const tokChar = new Map();
+  /* 2 поверх: 16 клітин. Ключ — байт «дверей» (його медальйон — герб групи),
+     далі номер шматка 1…255 (0 не використовуємо). */
+  const FLOOR2 = {
+    155: [ /* двері «Фрази» */
+      null,
+      'Слава Україні',                 // 1
+      'Героям слава',                  // 2
+      'Все буде Україна',              // 3
+      'Незламні',                      // 4
+      'Свобода',                       // 5
+      'Батьківщина',                   // 6
+      'Разом до перемоги',             // 7
+      'Доброго вечора, ми з України',  // 8
+      'Я тебе кохаю',                  // 9
+      'Все буде гаразд',               // 10
+      'Добро переможе зло',            // 11
+      'Мамо, я тебе люблю'             // 12
+    ],
+    5: [ /* двері «Автор» */
+      null,
+      'Михаил Кашкаров',                  // 1
+      'KASHKAROV MYKHAILO MYKOLAYOVYCH',  // 2
+      'astra31415926.github.io/',         // 3
+      'PROFESSIONAL DICKHEAD'             // 4
+    ]
+  };
+  const PIECES = [];                  /* усі шматки: [текст, [байти]] */
+  const tokChar = new Map(), doors = new Map();
+  const busy = b => toChar[b] != null || tokChar.has(b) || doors.has(b);
   for (const [piece, b] of DICT) {
-    if (toChar[b] != null || tokChar.has(b)) throw new Error('OC8: dictionary byte ' + b + ' busy');
-    tokChar.set(b, piece);
+    if (busy(b)) throw new Error('OC8: dictionary byte ' + b + ' busy');
+    tokChar.set(b, piece); PIECES.push([piece, [b]]);
   }
+  for (const k of Object.keys(FLOOR2)) {
+    const door = +k, list = FLOOR2[k];
+    if (busy(door)) throw new Error('OC8: door byte ' + door + ' busy');
+    if (list.length > 256) throw new Error('OC8: door ' + door + ' overfull');
+    doors.set(door, list);
+    for (let i = 1; i < list.length; i++) if (list[i]) PIECES.push([list[i], [door, i]]);
+  }
+  PIECES.sort((a, b) => b[0].length - a[0].length);
   function encode(str) {
     const c = clean(str), out = [];
     let i = 0;
     while (i < c.length) {
       let hit = null;
-      for (const d of DICT_BY_LEN) if (c.startsWith(d[0], i)) { hit = d; break; }
-      if (hit) { out.push(hit[1]); i += hit[0].length; }
+      for (const p of PIECES) if (c.startsWith(p[0], i)) { hit = p; break; }
+      if (hit) { out.push(...hit[1]); i += hit[0].length; }
       else { out.push(toByte.get(c[i])); i++; }
     }
     return Uint8Array.from(out);
   }
   function decode(bytes) {
     let o = '';
-    for (const b of bytes) {
-      const ch = toChar[b] != null ? toChar[b] : tokChar.get(b);
-      if (ch == null) throw new Error('OC8: byte ' + b + ' not in table');
-      o += ch;
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i];
+      if (toChar[b] != null) { o += toChar[b]; continue; }
+      if (tokChar.has(b)) { o += tokChar.get(b); continue; }
+      if (doors.has(b)) {
+        const piece = i + 1 < bytes.length ? doors.get(b)[bytes[i + 1]] : null;
+        if (!piece) throw new Error('OC8: door ' + b + ' bad index');
+        o += piece; i++; continue;
+      }
+      throw new Error('OC8: byte ' + b + ' not in table');
     }
     return o;
   }
