@@ -49,15 +49,45 @@ window.OC8 = (function () {
     }
     return o;
   }
+  /* СЛОВНИК (затверджено 15.11.2026). Частий шматок тексту = 1 байт.
+     Значення НЕ МІНЯТИ ніколи: інакше вже надруковані коди прочитаються
+     неправильно. Додавати нові — лише у вільні значення. */
+  const DICT = [
+    ['https://www.youtube.com/', 173],
+    ['https://www.instagram.com/', 138],
+    ['https://www.tiktok.com/', 174],
+    ['https://www.facebook.com/', 157],
+    ['https://t.me/', 159],
+    ['https://www.ornamentcode.com/', 182],
+    ['https://', 172],
+    ['https://www.', 169],
+    ['www.', 160],
+    ['.com', 164],
+    ['.com.ua', 166],
+    ['.ua', 161],
+    ['.org', 162]
+  ];
+  const DICT_BY_LEN = DICT.slice().sort((a, b) => b[0].length - a[0].length);
+  const tokChar = new Map();
+  for (const [piece, b] of DICT) {
+    if (toChar[b] != null || tokChar.has(b)) throw new Error('OC8: dictionary byte ' + b + ' busy');
+    tokChar.set(b, piece);
+  }
   function encode(str) {
-    const c = clean(str), out = new Uint8Array(c.length);
-    for (let i = 0; i < c.length; i++) out[i] = toByte.get(c[i]);
-    return out;
+    const c = clean(str), out = [];
+    let i = 0;
+    while (i < c.length) {
+      let hit = null;
+      for (const d of DICT_BY_LEN) if (c.startsWith(d[0], i)) { hit = d; break; }
+      if (hit) { out.push(hit[1]); i += hit[0].length; }
+      else { out.push(toByte.get(c[i])); i++; }
+    }
+    return Uint8Array.from(out);
   }
   function decode(bytes) {
     let o = '';
     for (const b of bytes) {
-      const ch = toChar[b];
+      const ch = toChar[b] != null ? toChar[b] : tokChar.get(b);
       if (ch == null) throw new Error('OC8: byte ' + b + ' not in table');
       o += ch;
     }
